@@ -15,10 +15,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main" \
        > /etc/apt/sources.list.d/nodesource.list
 
+# Add GitHub CLI repository
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list
+
 # Install all packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     git \
+    gh \
+    openssh-client \
     build-essential \
     curl \
     wget \
@@ -34,6 +42,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo "ALL ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/nopasswd \
     && chmod 440 /etc/sudoers.d/nopasswd
 
+# Install Python 3.12 from deadsnakes PPA
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
+    && pip install --break-system-packages uv
+
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
@@ -43,7 +66,17 @@ RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -s /bin/bash -u 1000 claude \
     && chmod 777 /home/claude
 
+# Install Python tools via uv
+USER claude
+ENV PATH="/home/claude/.local/bin:${PATH}"
+RUN uv tool install ruff \
+    && uv tool install mypy \
+    && uv tool install pytest \
+    && uv tool install ipython \
+    && chmod -R 777 /home/claude/.local /home/claude/.cache
+
 # Create entrypoint script that copies container CLAUDE.md to workspace
+USER root
 RUN mkdir -p /opt/claude-container
 COPY --chmod=755 <<'SCRIPT' /opt/claude-container/entrypoint.sh
 #!/bin/bash
@@ -104,7 +137,7 @@ check_claude_update() {
         echo "" >&2
         echo "╔════════════════════════════════════════════════════════════╗" >&2
         echo "║  Claude Code update available: $installed → $latest" >&2
-        echo "║  Run 'make update-claude' on host to rebuild image" >&2
+        echo "║  Run 'make update' on host to rebuild image" >&2
         echo "╚════════════════════════════════════════════════════════════╝" >&2
         echo "" >&2
     fi

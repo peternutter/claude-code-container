@@ -2,9 +2,9 @@
 
 A little tool I built for myself to run Claude Code **unhinged** with relative safety.
 
-The goal: let Claude run long-running processes—building, testing, debugging, iterating—with zero intervention. Walk away, come back, and your code is done (or at least thoroughly attempted).
+The goal: let Claude run long-running processes -- building, testing, debugging, iterating -- with zero intervention. Walk away, come back, and your code is done (or at least thoroughly attempted).
 
-Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but inside a Docker container that isolates it from your host system. The container can only access the project directory you mount—so Claude can go wild without nuking your machine.
+Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but inside a Docker container that isolates it from your host system. The container can only access the project directory you mount -- so Claude can go wild without nuking your machine.
 
 > **DO NOT DEPLOY THIS TO PRODUCTION. DO NOT RUN THIS IN THE CLOUD.**
 >
@@ -20,16 +20,15 @@ Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but
 - **Unhinged**: Claude runs with `--dangerously-skip-permissions`, auto-approving all actions
 - **Isolated**: Container has no access to your host filesystem except the mounted project
 - **Safe-ish**: The combination means Claude can work freely without destroying your system
-- **Language-optimized**: Dedicated images with full toolchains, linters, and profilers
 
-## Available Images
+## What's Installed
 
-| Image | Contents |
-|-------|----------|
-| `claude-sandbox-base` | Node.js 22, Claude CLI, git, common tools |
-| `claude-sandbox-go` | Go 1.23, golangci-lint, delve, gopls, gofumpt |
-| `claude-sandbox-rust` | Rust stable, clippy, rustfmt, rust-analyzer, cargo-watch |
-| `claude-sandbox-python` | Python 3.12, uv, ruff, mypy, pytest, ipython |
+- Ubuntu 24.04
+- Node.js 22.x (LTS)
+- Python 3.12, uv, ruff, mypy, pytest, ipython
+- Claude Code CLI
+- GitHub CLI (`gh`), SSH client
+- git, curl, build-essential, jq, ripgrep, fd-find
 
 ## Prerequisites
 
@@ -49,7 +48,7 @@ source ~/.zshrc  # or open a new terminal
 ```
 
 This will:
-1. Build all Docker images (base + language variants)
+1. Build the Docker image
 2. Install `claude-sandbox` script to `~/.claude/bin/`
 3. Add `~/.claude/bin` to your PATH
 
@@ -58,75 +57,28 @@ Your `~/.claude` directory is mounted directly into the container, so authentica
 ## Usage
 
 ```bash
-# Go project
-claude-sandbox go ~/projects/my-go-app
-
-# Rust project
-claude-sandbox rust ~/projects/my-rust-app
-
-# Python project
-claude-sandbox python ~/projects/my-python-app
-
-# Base image (just Claude CLI + common tools)
-claude-sandbox base ~/projects/any-project
-
-# Default: base image, current directory
+# Current directory
 claude-sandbox
+
+# Specific project
+claude-sandbox ~/projects/my-app
 ```
 
-### Rust Profiling
+## GitHub CLI Authentication
 
-For profiling Rust code with `flamegraph`, add the `--profile` flag which enables necessary kernel access:
+To authenticate `gh` inside the container, create a `.env` file in your project root:
 
-```bash
-claude-sandbox rust ~/projects/my-rust-app --profile
+```
+GH_TOKEN=ghp_your_token_here
 ```
 
-Inside the container, install flamegraph on-demand:
-```bash
-cargo install flamegraph
-cargo flamegraph --bin my-binary
-```
-
-## Build Individual Images
-
-```bash
-make build-base     # Base image only
-make build-go       # Go image (includes base)
-make build-rust     # Rust image (includes base)
-make build-python   # Python image (includes base)
-make build-all      # All images
-```
+The `.env` file is automatically loaded when starting the container. Add `.env` to your `.gitignore` to avoid committing secrets.
 
 ## Updating
 
-Update Claude Code CLI and tools to latest versions:
-
 ```bash
-make update-claude  # Rebuild base with latest Claude CLI
-make update-go      # Rebuild Go image with latest tools
-make update-rust    # Rebuild Rust image with latest tools
-make update-python  # Rebuild Python image with latest tools
-make update-all     # Rebuild everything fresh
+make update    # Rebuild with latest Claude Code CLI and tools
 ```
-
-## Cross-Compilation Notes
-
-### Go
-
-Binaries built in the container are Linux executables. To build for macOS:
-
-```bash
-GOOS=darwin GOARCH=arm64 go build -o myapp
-```
-
-### Rust
-
-Cross-compiling Rust for macOS from Linux is complex. For macOS binaries—especially those using Metal, GPU acceleration, or Apple frameworks—**build on your Mac directly**.
-
-Recommended workflow:
-- Use the container for Claude assistance, linting, and testing
-- Build release binaries on your Mac (code is mounted, so changes sync automatically)
 
 ## Persistent Storage
 
@@ -136,18 +88,15 @@ A `claude-home` volume is mounted at `/home/claude` to persist Claude Code's onb
 
 Your host's `~/.claude` directory is bind-mounted on top at `/home/claude/.claude`, so credentials and settings sync from your machine.
 
-### Language Caches
+### Cache Volumes
 
-Each language image mounts additional volumes for caches and installed tools:
+| Volume | Purpose |
+|--------|---------|
+| `claude-home` | Home directory, onboarding state |
+| `claude-uv-cache` | Python package cache |
+| `claude-python-bin` | Installed Python tools |
 
-| Image | Volumes |
-|-------|---------|
-| All | `claude-home` (home directory, onboarding state) |
-| Go | `claude-go-cache` (modules), `claude-go-bin` (installed tools) |
-| Rust | `claude-cargo-registry`, `claude-cargo-git`, `claude-cargo-bin` (installed tools) |
-| Python | `claude-uv-cache` (packages), `claude-python-bin` (installed tools) |
-
-Tools installed via `go install`, `cargo install`, or `uv tool install` persist across sessions.
+Tools installed via `uv tool install` persist across sessions.
 
 ## Uninstall
 
@@ -155,7 +104,7 @@ Tools installed via `go install`, `cargo install`, or `uv tool install` persist 
 make uninstall
 ```
 
-This removes Docker images, volumes, and the `~/.claude/bin/claude-sandbox` script.
+This removes the Docker image, volumes, and the `~/.claude/bin/claude-sandbox` script.
 
 To also remove the PATH entry, edit your `~/.zshrc` and remove the line:
 ```bash
@@ -184,43 +133,12 @@ This won't prevent changes when Claude is unhinged, but it helps when running Cl
 
 ## Project-Level Instructions
 
-Language containers (Python, Go, Rust) will append container-specific instructions to your project's `CLAUDE.md` on first run. This includes cross-compilation notes, tooling tips, and Makefile templates.
+The container will append container-specific instructions to your project's `CLAUDE.md` on first run, including tooling tips and environment notes.
 
-**Important**: The container only appends to an existing CLAUDE.md—it won't create one. Run `/init` inside Claude first to create your project's CLAUDE.md, then the container will add its instructions on next startup.
+**Important**: The container only appends to an existing CLAUDE.md -- it won't create one. Run `/init` inside Claude first to create your project's CLAUDE.md, then the container will add its instructions on next startup.
 
 To ignore the container marker file in git:
 
 ```
 .claude/.container-initialized
 ```
-
-## What's Installed
-
-### Base Image
-- Ubuntu 24.04
-- Node.js 22.x (LTS)
-- Claude Code CLI
-- git, curl, build-essential, jq, ripgrep, fd-find
-
-### Go Image (extends base)
-- Go 1.23
-- golangci-lint (meta-linter)
-- delve (debugger)
-- gopls (language server)
-- gofumpt (formatter)
-- graphviz (for pprof visualization)
-
-### Rust Image (extends base)
-- Rust stable via rustup
-- clippy, rustfmt
-- rust-analyzer
-- cargo-watch, cargo-edit
-- lldb (debugger)
-
-### Python Image (extends base)
-- Python 3.12
-- uv (fast package manager)
-- ruff (linter/formatter)
-- mypy (type checker)
-- pytest
-- ipython

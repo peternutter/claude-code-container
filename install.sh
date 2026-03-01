@@ -49,20 +49,20 @@ if [[ ! -d "$HOME/.claude" ]]; then
 fi
 echo "✓ ~/.claude exists"
 
-# Check if base image exists (offer to build)
-if ! docker image inspect claude-sandbox-base &>/dev/null 2>&1; then
+# Check if image exists (offer to build)
+if ! docker image inspect claude-sandbox &>/dev/null 2>&1; then
     echo ""
-    echo "⚠ Docker image 'claude-sandbox-base' not found."
+    echo "⚠ Docker image 'claude-sandbox' not found."
     echo ""
     read -p "Build now? [y/N] " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        make -C "$SCRIPT_DIR" build-base || exit 1
+        make -C "$SCRIPT_DIR" build || exit 1
     else
-        echo "Skipping. Run 'make build-base' before using claude-sandbox."
+        echo "Skipping. Run 'make build' before using claude-sandbox."
     fi
 else
-    echo "✓ Base image exists"
+    echo "✓ Image exists"
 fi
 
 echo ""
@@ -156,11 +156,11 @@ echo ""
 echo "Or open a new terminal."
 echo ""
 echo "Usage:"
-echo "  claude-sandbox [python|go|rust|base] [project_path]"
+echo "  claude-sandbox [project_path]"
 echo ""
 echo "Examples:"
-echo "  claude-sandbox python .        # Python, current directory"
-echo "  claude-sandbox go ~/myproject  # Go, specific project"
+echo "  claude-sandbox .               # Current directory"
+echo "  claude-sandbox ~/myproject     # Specific project"
 echo ""
 echo "Script location: $INSTALL_DIR/$SCRIPT_NAME"
 echo "============================================================"

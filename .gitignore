@@ -1,6 +1,9 @@
 # Claude Code project files (container-generated)
 .claude/
 
+# Secrets
+.env
+
 # macOS
 .DS_Store
 
