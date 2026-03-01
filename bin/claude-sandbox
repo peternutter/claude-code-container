@@ -77,6 +77,54 @@ docker_args=()
 docker_args+=(-v claude-uv-cache:/home/claude/.cache/uv -v claude-python-bin:/home/claude/.local/bin)
 
 # ============================================================
+# CROSS-LINK SESSION HISTORY
+# ============================================================
+# Claude Code keys history on the absolute workspace path. Inside the container
+# that's always /home/claude/workspace, but on the host it's the real project path.
+# Cross-link sessions so both sides see each other's conversations via /resume.
+
+host_project_key="${project_path//\//-}"
+container_project_key="-home-claude-workspace"
+host_project_dir="$HOME/.claude/projects/$host_project_key"
+container_project_dir="$HOME/.claude/projects/$container_project_key"
+
+if [[ -d "$host_project_dir" && "$host_project_key" != "$container_project_key" ]]; then
+    mkdir -p "$container_project_dir" "$host_project_dir"
+
+    # Link host sessions into container project dir
+    for f in "$host_project_dir"/*.jsonl(N); do
+        [[ -L "$f" ]] && continue
+        base="$(basename "$f")"
+        [[ ! -e "$container_project_dir/$base" ]] && \
+            ln -s "../$host_project_key/$base" "$container_project_dir/$base"
+    done
+
+    # Link container sessions into host project dir
+    for f in "$container_project_dir"/*.jsonl(N); do
+        [[ -L "$f" ]] && continue
+        base="$(basename "$f")"
+        [[ ! -e "$host_project_dir/$base" ]] && \
+            ln -s "../$container_project_key/$base" "$host_project_dir/$base"
+    done
+
+    # Also cross-link companion directories (subagent data)
+    for d in "$host_project_dir"/*(N/); do
+        [[ -L "$d" ]] && continue
+        base="$(basename "$d")"
+        [[ ! -e "$container_project_dir/$base" ]] && \
+            ln -s "../$host_project_key/$base" "$container_project_dir/$base"
+    done
+    for d in "$container_project_dir"/*(N/); do
+        [[ -L "$d" ]] && continue
+        base="$(basename "$d")"
+        [[ ! -e "$host_project_dir/$base" ]] && \
+            ln -s "../$container_project_key/$base" "$host_project_dir/$base"
+    done
+
+    echo "History: cross-linked with $(basename "$host_project_dir")"
+fi
+
+# ============================================================
 # PRE-FLIGHT CHECKS
 # ============================================================
 
