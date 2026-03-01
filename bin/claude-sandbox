@@ -91,23 +91,25 @@ container_project_dir="$HOME/.claude/projects/$container_project_key"
 if [[ -d "$host_project_dir" && "$host_project_key" != "$container_project_key" ]]; then
     mkdir -p "$container_project_dir" "$host_project_dir"
 
-    # Link host sessions into container project dir
+    # Hard-link host sessions into container project dir
+    # (hard links, not symlinks — Claude Code ignores symlinks when listing sessions)
     for f in "$host_project_dir"/*.jsonl(N); do
         [[ -L "$f" ]] && continue
         base="$(basename "$f")"
         [[ ! -e "$container_project_dir/$base" ]] && \
-            ln -s "../$host_project_key/$base" "$container_project_dir/$base"
+            ln "$f" "$container_project_dir/$base"
     done
 
-    # Link container sessions into host project dir
+    # Hard-link container sessions into host project dir
     for f in "$container_project_dir"/*.jsonl(N); do
         [[ -L "$f" ]] && continue
         base="$(basename "$f")"
         [[ ! -e "$host_project_dir/$base" ]] && \
-            ln -s "../$container_project_key/$base" "$host_project_dir/$base"
+            ln "$f" "$host_project_dir/$base"
     done
 
     # Also cross-link companion directories (subagent data)
+    # Directories can't be hard-linked, so copy them as symlinks (best effort)
     for d in "$host_project_dir"/*(N/); do
         [[ -L "$d" ]] && continue
         base="$(basename "$d")"
