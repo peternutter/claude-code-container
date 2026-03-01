@@ -57,17 +57,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 \
     && pip install --break-system-packages uv
 
-# Install Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
-
 # Create non-root user with UID 1000 (delete ubuntu user first if it exists)
 # Make home directory world-writable so container can run as any UID (via --user flag)
 RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -s /bin/bash -u 1000 claude \
     && chmod 777 /home/claude
 
-# Install Python tools via uv
+# Install Claude Code CLI (native installer, as non-root)
 USER claude
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/home/claude/.claude/bin:${PATH}"
+
+# Install Python tools via uv
 ENV PATH="/home/claude/.local/bin:${PATH}"
 RUN uv tool install ruff \
     && uv tool install mypy \
@@ -131,8 +132,8 @@ check_claude_update() {
     # Wait for Claude to start before printing anything to avoid output interleaving
     sleep 3
     local installed=$(claude --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-    # Timeout after 5 seconds to avoid hanging on slow/unreachable registry
-    local latest=$(timeout 5 npm show @anthropic-ai/claude-code version 2>/dev/null)
+    # Check latest version from the install script's GitHub releases
+    local latest=$(timeout 5 curl -fsSL https://api.github.com/repos/anthropics/claude-code/releases/latest 2>/dev/null | grep -oP '"tag_name":\s*"v?\K[0-9]+\.[0-9]+\.[0-9]+')
     if [ -n "$installed" ] && [ -n "$latest" ] && [ "$installed" != "$latest" ]; then
         echo "" >&2
         echo "╔════════════════════════════════════════════════════════════╗" >&2
