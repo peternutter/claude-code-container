@@ -14,6 +14,8 @@ Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but
 
 > **Warning**: Your global `~/.claude` directory is mounted read-write into the container. This includes your authentication credentials, settings, and global CLAUDE.md. Claude can modify these files. Be careful, and consider adding protections to your `~/.claude/CLAUDE.md` (see below).
 
+> **Platform**: Only tested on macOS. Should work on Linux but is untested. Windows/WSL is not supported.
+
 ## Why Use This?
 
 - **Hands-off**: Let Claude build, test, fix, and iterate without you clicking "approve" every 10 seconds
@@ -27,8 +29,9 @@ Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but
 - Node.js 22.x (LTS)
 - Python 3.12, uv, ruff, mypy, pytest, ipython
 - Claude Code CLI
-- GitHub CLI (`gh`), SSH client
+- GitHub CLI (`gh`), AWS CLI
 - git, curl, build-essential, jq, ripgrep, fd-find
+- wandb, huggingface-cli
 
 ## Prerequisites
 
@@ -62,17 +65,42 @@ claude-sandbox
 
 # Specific project
 claude-sandbox ~/projects/my-app
+
+# Resume a previous conversation
+claude-sandbox . --resume
+
+# Resume a specific session with model override
+claude-sandbox . --resume abc123 --model opus
+
+# Override the container workspace path (for session cross-linking)
+claude-sandbox --as /home/claude/workspaces/old-name .
 ```
 
-## GitHub CLI Authentication
+All unrecognized flags are forwarded to the `claude` CLI inside the container. Use `--` for explicit separation: `claude-sandbox . -- --verbose`.
 
-To authenticate `gh` inside the container, create a `.env` file in your project root:
+The `--as <path>` flag overrides the container workspace path. This is useful when you need to resume sessions that were created under a different path (e.g., after renaming a project directory).
+
+## Git & GitHub Authentication
+
+Git authentication uses **HTTPS with a GitHub token** (SSH is not supported inside the container due to UID mapping constraints).
+
+1. Create a [personal access token](https://github.com/settings/tokens) with `repo` scope
+2. Add it to a `.env` file:
 
 ```
 GH_TOKEN=ghp_your_token_here
 ```
 
-The `.env` file is automatically loaded when starting the container. Add `.env` to your `.gitignore` to avoid committing secrets.
+Place the `.env` in your project root (takes priority) or in `~/.claude/.env` (global fallback). The token is automatically configured for both `gh` and `git push/pull` via HTTPS.
+
+Add `.env` to your `.gitignore` to avoid committing secrets.
+
+## AWS Authentication
+
+AWS credentials can be provided in two ways:
+
+1. **Config files**: If `~/.aws` exists on the host, it's mounted read-only into the container
+2. **Environment variables**: Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc. to your `.env` file
 
 ## Updating
 
@@ -133,12 +161,12 @@ This won't prevent changes when Claude is unhinged, but it helps when running Cl
 
 ## Project-Level Instructions
 
-The container will append container-specific instructions to your project's `CLAUDE.md` on first run, including tooling tips and environment notes.
+On first launch in a project, the container appends sandbox-specific instructions to your existing `CLAUDE.md` — things like available tools, how git/auth works inside the container, and package management tips. This only happens once (tracked by a `.claude/.container-initialized` marker).
 
-**Important**: The container only appends to an existing CLAUDE.md -- it won't create one. Run `/init` inside Claude first to create your project's CLAUDE.md, then the container will add its instructions on next startup.
+You need a `CLAUDE.md` first — run `/init` inside Claude to create one, then the container will append its instructions on the next startup.
 
-To ignore the container marker file in git:
-
+To keep the marker out of version control:
 ```
+# .gitignore
 .claude/.container-initialized
 ```

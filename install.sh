@@ -110,6 +110,14 @@ cp "$SCRIPT_DIR/bin/claude-sandbox" "$INSTALL_DIR/$SCRIPT_NAME"
 chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
 
 echo "Created: $INSTALL_DIR/$SCRIPT_NAME"
+
+# Save Dockerfile for auto-rebuild (image can disappear after Docker prune)
+SANDBOX_DIR="$HOME/.claude/sandbox"
+mkdir -p "$SANDBOX_DIR"
+if [[ -f "$SCRIPT_DIR/dockerfiles/base.Dockerfile" ]]; then
+    cp "$SCRIPT_DIR/dockerfiles/base.Dockerfile" "$SANDBOX_DIR/base.Dockerfile"
+    echo "Saved:   $SANDBOX_DIR/base.Dockerfile (for auto-rebuild)"
+fi
 echo ""
 
 # ============================================================
@@ -156,11 +164,12 @@ echo ""
 echo "Or open a new terminal."
 echo ""
 echo "Usage:"
-echo "  claude-sandbox [project_path]"
+echo "  claude-sandbox [OPTIONS] [PROJECT_PATH] [CLAUDE_ARGS...]"
 echo ""
 echo "Examples:"
 echo "  claude-sandbox .               # Current directory"
 echo "  claude-sandbox ~/myproject     # Specific project"
+echo "  claude-sandbox . --resume      # Resume last conversation"
 echo ""
 echo "Script location: $INSTALL_DIR/$SCRIPT_NAME"
 echo "============================================================"

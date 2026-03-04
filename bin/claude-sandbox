@@ -2,17 +2,22 @@
 # claude-sandbox - Run Claude Code in a Docker container
 # Location: ~/.claude/bin/claude-sandbox (installed by install.sh)
 #
-# Usage: claude-sandbox [project_path]
+# Usage: claude-sandbox [OPTIONS] [PROJECT_PATH] [CLAUDE_ARGS...]
 #
 # Examples:
-#   claude-sandbox .              # Current directory
-#   claude-sandbox ~/myproject    # Specific project
+#   claude-sandbox .                    # Current directory
+#   claude-sandbox ~/myproject          # Specific project
+#   claude-sandbox . --resume           # Resume last conversation
+#   claude-sandbox --as /path/to/ws .   # Custom container workspace path
 
 set -e
 
 project_path="$(pwd)"
+claude_args=()
+as_path=""
+project_path_set=false
 
-# Parse arguments
+# Parse arguments: sandbox flags first, then project path, then claude args
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
@@ -20,31 +25,45 @@ while [[ $# -gt 0 ]]; do
 claude-sandbox - Run Claude Code unhinged in a Docker container
 
 USAGE
-    claude-sandbox [PROJECT_PATH]
+    claude-sandbox [OPTIONS] [PROJECT_PATH] [-- CLAUDE_ARGS...]
+    claude-sandbox [PROJECT_PATH] [CLAUDE_ARGS...]
 
 OPTIONS
-    -h, --help  Show this help message
+    -h, --help       Show this help message
+    --as <path>      Override the container workspace path (must be absolute).
+                     Useful for resuming sessions created under a different path.
+
+CLAUDE ARGS
+    All unrecognized flags and non-directory arguments are forwarded to the
+    claude CLI inside the container. Use -- to be explicit about separation.
 
 EXAMPLES
-    claude-sandbox                     # Current directory
-    claude-sandbox ~/projects/myapp    # Specific project
+    claude-sandbox                                  # Current directory
+    claude-sandbox ~/projects/myapp                 # Specific project
+    claude-sandbox . --resume                       # Resume last conversation
+    claude-sandbox . --resume abc123 --model opus   # Resume specific + model
+    claude-sandbox --as /home/claude/workspace .    # Custom container path
+    claude-sandbox . -- --verbose                   # Explicit passthrough
 
 WHAT IT DOES
     Runs Claude Code with --dangerously-skip-permissions inside a container.
     Claude can build, test, and iterate autonomously without approval prompts.
     Only the project directory and ~/.claude are accessible to the container.
 
-    Includes: Python 3.12, uv, ruff, mypy, pytest, gh, ssh, Node.js 22
+    Includes: Python 3.12, uv, ruff, mypy, pytest, gh, aws, Node.js 22
 
 MOUNTS
     claude-home volume     -> /home/claude            (persistent home)
     ~/.claude              -> /home/claude/.claude    (auth, settings from host)
     ~/Screenshots          -> /home/claude/Screenshots (read-only)
-    <project_path>         -> /home/claude/workspace
+    ~/.aws                 -> /home/claude/.aws       (read-only, if exists)
+    <project_path>         -> <container_workspace>
 
 ENVIRONMENT
-    Place a .env file in your project root to pass environment variables
-    (e.g., GH_TOKEN for GitHub CLI authentication).
+    Environment variables are loaded from a .env file. Checked in order:
+      1. <project_root>/.env  (project-specific, takes priority)
+      2. ~/.claude/.env        (global fallback for all projects)
+    Use this for GH_TOKEN, API keys, etc.
 
     CLAUDE_SANDBOX_SKIP_NETWORK    Skip the Docker network selection prompt
 
@@ -53,13 +72,33 @@ MORE INFO
 HELP
             exit 0
             ;;
-        *)
-            if [[ -d "$1" ]]; then
-                project_path="$1"
-            else
-                echo "Unknown argument: $1"
-                echo "Usage: claude-sandbox [project_path]"
+        --as)
+            if [[ -z "${2:-}" ]]; then
+                echo "Error: --as requires a path argument"
                 exit 1
+            fi
+            if [[ "$2" != /* ]]; then
+                echo "Error: --as path must be absolute (start with /)"
+                exit 1
+            fi
+            as_path="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            claude_args+=("$@")
+            break
+            ;;
+        -*)
+            claude_args+=("$1")
+            shift
+            ;;
+        *)
+            if [[ "$project_path_set" == false && -d "$1" ]]; then
+                project_path="$1"
+                project_path_set=true
+            else
+                claude_args+=("$1")
             fi
             shift
             ;;
@@ -80,49 +119,47 @@ docker_args+=(-v claude-uv-cache:/home/claude/.cache/uv -v claude-python-bin:/ho
 # CROSS-LINK SESSION HISTORY
 # ============================================================
 # Claude Code keys history on the absolute workspace path. Inside the container
-# that's always /home/claude/workspace, but on the host it's the real project path.
-# Cross-link sessions so both sides see each other's conversations via /resume.
+# that path is /home/claude/workspaces/$project_name, on the host it's the real
+# project path. Cross-link sessions so both sides see each other via /resume.
+
+# Determine container workspace path (--as overrides default)
+if [[ -n "$as_path" ]]; then
+    container_workspace="$as_path"
+else
+    container_workspace="/home/claude/workspaces/$project_name"
+fi
 
 host_project_key="${project_path//\//-}"
-container_project_key="-home-claude-workspace"
+container_project_key="${container_workspace//\//-}"
 host_project_dir="$HOME/.claude/projects/$host_project_key"
 container_project_dir="$HOME/.claude/projects/$container_project_key"
 
-if [[ -d "$host_project_dir" && "$host_project_key" != "$container_project_key" ]]; then
-    mkdir -p "$container_project_dir" "$host_project_dir"
+# Cross-link sessions between two project dirs (hard-links for JSONL, symlinks for dirs)
+crosslink_sessions() {
+    local src_dir="$1" dst_dir="$2" src_key="$3"
 
-    # Hard-link host sessions into container project dir
-    # (hard links, not symlinks — Claude Code ignores symlinks when listing sessions)
-    for f in "$host_project_dir"/*.jsonl(N); do
+    [[ ! -d "$src_dir" ]] && return
+    mkdir -p "$dst_dir"
+
+    # Hard-link JSONL session files (Claude Code ignores symlinks when listing sessions)
+    for f in "$src_dir"/*.jsonl(N); do
         [[ -L "$f" ]] && continue
         base="$(basename "$f")"
-        [[ ! -e "$container_project_dir/$base" ]] && \
-            ln "$f" "$container_project_dir/$base"
+        [[ ! -e "$dst_dir/$base" ]] && ln "$f" "$dst_dir/$base"
     done
 
-    # Hard-link container sessions into host project dir
-    for f in "$container_project_dir"/*.jsonl(N); do
-        [[ -L "$f" ]] && continue
-        base="$(basename "$f")"
-        [[ ! -e "$host_project_dir/$base" ]] && \
-            ln "$f" "$host_project_dir/$base"
-    done
-
-    # Also cross-link companion directories (subagent data)
-    # Directories can't be hard-linked, so copy them as symlinks (best effort)
-    for d in "$host_project_dir"/*(N/); do
+    # Symlink companion directories (subagent data; dirs can't be hard-linked)
+    for d in "$src_dir"/*(N/); do
         [[ -L "$d" ]] && continue
         base="$(basename "$d")"
-        [[ ! -e "$container_project_dir/$base" ]] && \
-            ln -s "../$host_project_key/$base" "$container_project_dir/$base"
+        [[ ! -e "$dst_dir/$base" ]] && ln -s "../$src_key/$base" "$dst_dir/$base"
     done
-    for d in "$container_project_dir"/*(N/); do
-        [[ -L "$d" ]] && continue
-        base="$(basename "$d")"
-        [[ ! -e "$host_project_dir/$base" ]] && \
-            ln -s "../$container_project_key/$base" "$host_project_dir/$base"
-    done
+}
 
+# Pre-launch: host -> container (so sandbox can /resume host conversations)
+if [[ "$host_project_key" != "$container_project_key" ]]; then
+    crosslink_sessions "$host_project_dir" "$container_project_dir" "$host_project_key"
+    crosslink_sessions "$container_project_dir" "$host_project_dir" "$container_project_key"
     echo "History: cross-linked with $(basename "$host_project_dir")"
 fi
 
@@ -141,13 +178,23 @@ if [[ ! -d "$HOME/.claude" ]]; then
     exit 1
 fi
 
-# Check image exists
+# Check image exists; auto-build from saved Dockerfile if available
 if ! docker image inspect "$image" &>/dev/null; then
-    echo "✗ Docker image '$image' not found."
-    echo ""
-    echo "  Build it first (from claude-code-container repo):"
-    echo "    make build"
-    exit 1
+    saved_dockerfile="$HOME/.claude/sandbox/base.Dockerfile"
+    if [[ -f "$saved_dockerfile" ]]; then
+        echo "Image '$image' not found. Auto-building from saved Dockerfile..."
+        docker build -t "$image" -f "$saved_dockerfile" . || {
+            echo "✗ Auto-build failed. Run 'make build' from the claude-code-container repo."
+            exit 1
+        }
+        echo "✓ Image rebuilt successfully"
+    else
+        echo "✗ Docker image '$image' not found."
+        echo ""
+        echo "  Build it first (from claude-code-container repo):"
+        echo "    make build"
+        exit 1
+    fi
 fi
 
 # Show mount info
@@ -155,7 +202,8 @@ echo ""
 echo "Mounts:"
 echo "  ~/.claude → /home/claude/.claude"
 echo "  ~/Screenshots → /home/claude/Screenshots (ro)"
-echo "  $project_path → /home/claude/workspace"
+[[ -d "$HOME/.aws" ]] && echo "  ~/.aws → /home/claude/.aws (ro)"
+echo "  $project_path → $container_workspace"
 echo ""
 echo "Copied into volume (not bind-mounted):"
 [[ -f "$HOME/.claude.json" ]] && echo "  ✓ ~/.claude.json"
@@ -225,7 +273,9 @@ if [[ -n "$mcp_servers" ]]; then
     while IFS= read -r name && IFS= read -r config; do
         # Escape single quotes in config for shell embedding
         escaped_config="${config//\'/\'\\\'\'}"
-        sync_script+="claude mcp add-json '$name' '$escaped_config' --scope user 2>/dev/null
+        sync_script+="echo \"  Syncing MCP: $name\" >&2
+claude mcp remove '$name' --scope user 2>/dev/null
+claude mcp add-json '$name' '$escaped_config' --scope user || echo \"  ⚠ Failed to sync MCP server: $name\" >&2
 "
     done <<< "$mcp_servers"
 fi
@@ -250,25 +300,82 @@ docker run --rm \
     "${sync_args[@]}" \
     "$image" -c "$sync_script"
 
-# Pass .env file if it exists in the project root (for GH_TOKEN, etc.)
+# Mount AWS config for profile/SSO-based auth (key-based auth works via .env)
+if [[ -d "$HOME/.aws" ]]; then
+    docker_args+=(-v "$HOME/.aws":/home/claude/.aws:ro)
+fi
+
+# Pass .env file: project root first, then global fallback
 if [[ -f "$project_path/.env" ]]; then
     docker_args+=(--env-file "$project_path/.env")
-    echo "Environment: loaded .env"
+    echo "Environment: loaded $project_path/.env"
+elif [[ -f "$HOME/.claude/.env" ]]; then
+    docker_args+=(--env-file "$HOME/.claude/.env")
+    echo "Environment: loaded ~/.claude/.env (global)"
+fi
+
+# Resolve symlinked skills/commands dirs so they mount correctly in the container.
+# On macOS, ~/.claude/skills may symlink to ~/Developer/dotfiles/claude/skills which
+# doesn't exist inside the container. We resolve to the real host path and bind-mount it.
+# IMPORTANT: These mounts must come AFTER the ~/.claude bind mount in docker run,
+# otherwise the parent mount covers the child. Collected separately for ordering.
+skills_overlay=()
+for subdir in skills commands; do
+    link_path="$HOME/.claude/$subdir"
+    if [[ -L "$link_path" ]]; then
+        real_path="$(readlink -f "$link_path")"
+        if [[ -d "$real_path" ]]; then
+            skills_overlay+=(-v "$real_path:/home/claude/.claude/$subdir:ro")
+            echo "Resolved $subdir symlink: $real_path"
+        else
+            echo "⚠ ~/.claude/$subdir symlink target not found: $real_path"
+        fi
+    fi
+done
+
+# Fix settings.json macOS paths for the container.
+# settings.json is a real file (not a symlink) so this overlay mount works reliably.
+resolved_dir="$(mktemp -d)"
+
+# Cleanup temp dir and cross-link new sandbox sessions back to host on exit
+cleanup_and_crosslink() {
+    rm -rf "$resolved_dir"
+    # Post-exit: container -> host (so host sees new sandbox conversations)
+    if [[ "$host_project_key" != "$container_project_key" ]]; then
+        crosslink_sessions "$container_project_dir" "$host_project_dir" "$container_project_key"
+        crosslink_sessions "$host_project_dir" "$container_project_dir" "$host_project_key"
+    fi
+}
+trap cleanup_and_crosslink EXIT
+settings_overlay=()
+
+if [[ -f "$HOME/.claude/settings.json" ]]; then
+    sed "s|/Users/[^/]*/\.claude/|/home/claude/.claude/|g" \
+        "$HOME/.claude/settings.json" > "$resolved_dir/settings.json"
+    if ! diff -q "$HOME/.claude/settings.json" "$resolved_dir/settings.json" &>/dev/null; then
+        settings_overlay=(-v "$resolved_dir/settings.json:/home/claude/.claude/settings.json:ro")
+        echo "Fixed settings.json paths for container"
+    fi
 fi
 
 # Volume mount order matters:
 # 1. claude-home volume provides persistent home directory (for .claude.json, etc.)
 # 2. ~/.claude bind mount overlays credentials/settings from host
-# 3. workspace bind mount overlays the project directory
+# 3. settings.json overlay fixes macOS paths for the container
+# 4. skills/commands overlays resolve symlinked dirs from host
+# 5. workspace bind mount overlays the project directory
 
 docker run -it --rm \
     --user "$(id -u):$(id -g)" \
-    --name "claude-$project_name" \
+    --name "claude-${project_name}-$$" \
     -e HOME=/home/claude \
     -e TERM=xterm-256color \
     "${docker_args[@]}" \
     -v claude-home:/home/claude \
     -v "$HOME/.claude":/home/claude/.claude \
+    "${settings_overlay[@]}" \
+    "${skills_overlay[@]}" \
     -v "$HOME/Screenshots":/home/claude/Screenshots:ro \
-    -v "$project_path":/home/claude/workspace \
-    "$image"
+    -v "$project_path":"$container_workspace" \
+    -w "$container_workspace" \
+    "$image" claude --dangerously-skip-permissions "${claude_args[@]}"

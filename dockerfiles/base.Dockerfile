@@ -64,7 +64,8 @@ RUN npm install -g @anthropic-ai/claude-code
 # Make home directory world-writable so container can run as any UID (via --user flag)
 RUN userdel -r ubuntu 2>/dev/null || true \
     && useradd -m -s /bin/bash -u 1000 claude \
-    && chmod 777 /home/claude
+    && chmod 777 /home/claude \
+    && chmod 666 /etc/passwd
 
 # Install Python tools via uv
 USER claude
@@ -73,17 +74,52 @@ RUN uv tool install ruff \
     && uv tool install mypy \
     && uv tool install pytest \
     && uv tool install ipython \
+    && uv tool install wandb \
+    && uv tool install 'huggingface_hub[cli]' \
+    && uv tool install awscli \
     && chmod -R 777 /home/claude/.local /home/claude/.cache
 
-# Create entrypoint script that copies container CLAUDE.md to workspace
+# Container-specific instructions appended to project CLAUDE.md on first run
 USER root
 RUN mkdir -p /opt/claude-container
+COPY --chmod=644 <<'CONTAINER_MD' /opt/claude-container/CLAUDE.md
+
+# Sandbox Environment
+
+You are running inside a Docker container via `claude-sandbox`.
+All actions are auto-approved (`--dangerously-skip-permissions`).
+
+## Available tools
+- **Python**: 3.12, uv, ruff, mypy, pytest, ipython
+- **Node.js**: 22.x (LTS)
+- **CLI tools**: git, gh, curl, jq, ripgrep, fd-find, aws, postgresql-client
+- **ML tools**: wandb, huggingface-cli
+
+## Package management
+- Use `uv` for Python (not pip). Installed tools persist across sessions.
+  - `uv tool install <pkg>` for CLI tools
+  - `uv add <pkg>` for project dependencies
+- Use `npm` for Node.js packages.
+- Use `sudo apt-get install` for system packages (available with no password).
+
+## Git
+- Git uses HTTPS, not SSH. Authentication is handled via `GH_TOKEN`.
+- `git push`, `git pull`, and `gh` commands work out of the box.
+- If git auth fails, check that `GH_TOKEN` is set in the project `.env` or `~/.claude/.env`.
+
+## Filesystem
+- Only the mounted project directory is writable. You cannot access the host filesystem.
+- `~/.claude` is shared with the host (settings, credentials, session history).
+- `/home/claude` is a persistent volume — files outside the project and `~/.claude` survive restarts.
+CONTAINER_MD
+
 COPY --chmod=755 <<'SCRIPT' /opt/claude-container/entrypoint.sh
 #!/bin/bash
 
 # Verify mount points are accessible (output to stderr to not interfere with commands)
 verify_mounts() {
     local failed=false
+    local ws="$(pwd)"
 
     # Check ~/.claude is writable
     if ! touch ~/.claude/.mount-test 2>/dev/null; then
@@ -94,11 +130,11 @@ verify_mounts() {
     fi
 
     # Check workspace is writable
-    if ! touch /home/claude/workspace/.mount-test 2>/dev/null; then
-        echo "⚠ Warning: /home/claude/workspace is not writable" >&2
+    if ! touch "$ws/.mount-test" 2>/dev/null; then
+        echo "⚠ Warning: $ws is not writable" >&2
         failed=true
     else
-        rm -f /home/claude/workspace/.mount-test
+        rm -f "$ws/.mount-test"
     fi
 
     # Check for CLAUDE.md files (informational)
@@ -108,9 +144,9 @@ verify_mounts() {
         echo "○ No global ~/.claude/CLAUDE.md" >&2
     fi
 
-    if [ -f /home/claude/workspace/CLAUDE.md ]; then
+    if [ -f "$ws/CLAUDE.md" ]; then
         echo "✓ Project CLAUDE.md found (root)" >&2
-    elif [ -f /home/claude/workspace/.claude/CLAUDE.md ]; then
+    elif [ -f "$ws/.claude/CLAUDE.md" ]; then
         echo "✓ Project CLAUDE.md found (.claude/)" >&2
     else
         echo "○ No project CLAUDE.md (run /init to create)" >&2
@@ -121,9 +157,20 @@ verify_mounts() {
         echo "Mount verification failed. Check your docker run command." >&2
         echo "Expected: -v claude-home:/home/claude" >&2
         echo "          -v \"\$HOME/.claude\":/home/claude/.claude" >&2
-        echo "          -v \"\$PROJECT\":/home/claude/workspace" >&2
+        echo "          -v \"\$PROJECT\":\$PWD (set via -w)" >&2
     fi
 }
+
+# Ensure current UID has a passwd entry (needed for git, ssh, and other tools)
+if ! getent passwd "$(id -u)" >/dev/null 2>&1; then
+    echo "claude:x:$(id -u):$(id -g):Claude:/home/claude:/bin/bash" >> /etc/passwd
+fi
+
+# Configure git to use GH_TOKEN for HTTPS auth when available
+if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
+    gh auth setup-git 2>/dev/null || true
+fi
+
 verify_mounts
 
 # Check for Claude Code CLI updates (background, non-blocking)
@@ -146,28 +193,26 @@ check_claude_update &
 
 # Append container-specific instructions to existing CLAUDE.md (if present)
 # Only append, never create - user should run /init first
-MARKER="/home/claude/workspace/.claude/.container-initialized"
+ws="$(pwd)"
+MARKER="$ws/.claude/.container-initialized"
 if [ -f /opt/claude-container/CLAUDE.md ] && [ ! -f "$MARKER" ]; then
-    if [ -f /home/claude/workspace/.claude/CLAUDE.md ]; then
-        # Append container instructions to existing CLAUDE.md
-        echo "" >> /home/claude/workspace/.claude/CLAUDE.md
-        cat /opt/claude-container/CLAUDE.md >> /home/claude/workspace/.claude/CLAUDE.md
+    if [ -f "$ws/.claude/CLAUDE.md" ]; then
+        echo "" >> "$ws/.claude/CLAUDE.md"
+        cat /opt/claude-container/CLAUDE.md >> "$ws/.claude/CLAUDE.md"
         echo "✓ Appended container instructions to .claude/CLAUDE.md" >&2
-    elif [ -f /home/claude/workspace/CLAUDE.md ]; then
-        # Append to root CLAUDE.md if that's where it is
-        echo "" >> /home/claude/workspace/CLAUDE.md
-        cat /opt/claude-container/CLAUDE.md >> /home/claude/workspace/CLAUDE.md
+    elif [ -f "$ws/CLAUDE.md" ]; then
+        echo "" >> "$ws/CLAUDE.md"
+        cat /opt/claude-container/CLAUDE.md >> "$ws/CLAUDE.md"
         echo "✓ Appended container instructions to CLAUDE.md" >&2
     else
         echo "○ No CLAUDE.md found - run /init to create one" >&2
     fi
-    mkdir -p /home/claude/workspace/.claude
+    mkdir -p "$ws/.claude"
     touch "$MARKER"
 fi
 exec "$@"
 SCRIPT
 
-WORKDIR /home/claude/workspace
 USER claude
 
 ENTRYPOINT ["/opt/claude-container/entrypoint.sh"]
