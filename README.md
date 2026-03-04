@@ -161,12 +161,6 @@ This won't prevent changes when Claude is unhinged, but it helps when running Cl
 
 ## Project-Level Instructions
 
-On first launch in a project, the container appends sandbox-specific instructions to your existing `CLAUDE.md` — things like available tools, how git/auth works inside the container, and package management tips. This only happens once (tracked by a `.claude/.container-initialized` marker).
+The sandbox automatically injects environment-specific instructions (available tools, git auth, package management) into every session via `--append-system-prompt`. This means Claude always knows it's in a container and how to use the tools — no project file modification needed.
 
-You need a `CLAUDE.md` first — run `/init` inside Claude to create one, then the container will append its instructions on the next startup.
-
-To keep the marker out of version control:
-```
-# .gitignore
-.claude/.container-initialized
-```
+You can also create a `CLAUDE.md` in your project root (or `.claude/CLAUDE.md`) for project-specific instructions. Run `/init` inside Claude to generate one interactively.

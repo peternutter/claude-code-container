@@ -358,6 +358,33 @@ if [[ -f "$HOME/.claude/settings.json" ]]; then
     fi
 fi
 
+# Sandbox environment instructions injected via --append-system-prompt
+read -r -d '' sandbox_prompt <<'SANDBOX_PROMPT' || true
+# Sandbox Environment
+You are running inside a Docker container via claude-sandbox. All actions are auto-approved.
+
+## Available tools
+- Python 3.12, uv, ruff, mypy, pytest, ipython
+- Node.js 22.x (LTS)
+- CLI: git, gh, curl, jq, ripgrep, fd-find, aws, postgresql-client
+- ML: wandb, huggingface-cli
+
+## Package management
+- Use uv for Python (not pip). Installed tools persist across sessions (uv tool install <pkg>).
+- Use npm for Node.js packages.
+- Use sudo apt-get install for system packages (no password required).
+
+## Git
+- Git uses HTTPS, not SSH. Auth is handled via GH_TOKEN.
+- git push, git pull, and gh commands work out of the box.
+- If git auth fails, check that GH_TOKEN is set in .env or ~/.claude/.env.
+
+## Filesystem
+- Only the mounted project directory is writable.
+- ~/.claude is shared with the host (settings, credentials, session history).
+- /home/claude is a persistent volume — files outside the project and ~/.claude survive restarts.
+SANDBOX_PROMPT
+
 # Volume mount order matters:
 # 1. claude-home volume provides persistent home directory (for .claude.json, etc.)
 # 2. ~/.claude bind mount overlays credentials/settings from host
@@ -378,4 +405,4 @@ docker run -it --rm \
     -v "$HOME/Screenshots":/home/claude/Screenshots:ro \
     -v "$project_path":"$container_workspace" \
     -w "$container_workspace" \
-    "$image" claude --dangerously-skip-permissions "${claude_args[@]}"
+    "$image" claude --dangerously-skip-permissions --append-system-prompt "$sandbox_prompt" "${claude_args[@]}"

@@ -79,40 +79,9 @@ RUN uv tool install ruff \
     && uv tool install awscli \
     && chmod -R 777 /home/claude/.local /home/claude/.cache
 
-# Container-specific instructions appended to project CLAUDE.md on first run
+# Create entrypoint script
 USER root
 RUN mkdir -p /opt/claude-container
-COPY --chmod=644 <<'CONTAINER_MD' /opt/claude-container/CLAUDE.md
-
-# Sandbox Environment
-
-You are running inside a Docker container via `claude-sandbox`.
-All actions are auto-approved (`--dangerously-skip-permissions`).
-
-## Available tools
-- **Python**: 3.12, uv, ruff, mypy, pytest, ipython
-- **Node.js**: 22.x (LTS)
-- **CLI tools**: git, gh, curl, jq, ripgrep, fd-find, aws, postgresql-client
-- **ML tools**: wandb, huggingface-cli
-
-## Package management
-- Use `uv` for Python (not pip). Installed tools persist across sessions.
-  - `uv tool install <pkg>` for CLI tools
-  - `uv add <pkg>` for project dependencies
-- Use `npm` for Node.js packages.
-- Use `sudo apt-get install` for system packages (available with no password).
-
-## Git
-- Git uses HTTPS, not SSH. Authentication is handled via `GH_TOKEN`.
-- `git push`, `git pull`, and `gh` commands work out of the box.
-- If git auth fails, check that `GH_TOKEN` is set in the project `.env` or `~/.claude/.env`.
-
-## Filesystem
-- Only the mounted project directory is writable. You cannot access the host filesystem.
-- `~/.claude` is shared with the host (settings, credentials, session history).
-- `/home/claude` is a persistent volume — files outside the project and `~/.claude` survive restarts.
-CONTAINER_MD
-
 COPY --chmod=755 <<'SCRIPT' /opt/claude-container/entrypoint.sh
 #!/bin/bash
 
@@ -191,25 +160,6 @@ check_claude_update() {
 }
 check_claude_update &
 
-# Append container-specific instructions to existing CLAUDE.md (if present)
-# Only append, never create - user should run /init first
-ws="$(pwd)"
-MARKER="$ws/.claude/.container-initialized"
-if [ -f /opt/claude-container/CLAUDE.md ] && [ ! -f "$MARKER" ]; then
-    if [ -f "$ws/.claude/CLAUDE.md" ]; then
-        echo "" >> "$ws/.claude/CLAUDE.md"
-        cat /opt/claude-container/CLAUDE.md >> "$ws/.claude/CLAUDE.md"
-        echo "✓ Appended container instructions to .claude/CLAUDE.md" >&2
-    elif [ -f "$ws/CLAUDE.md" ]; then
-        echo "" >> "$ws/CLAUDE.md"
-        cat /opt/claude-container/CLAUDE.md >> "$ws/CLAUDE.md"
-        echo "✓ Appended container instructions to CLAUDE.md" >&2
-    else
-        echo "○ No CLAUDE.md found - run /init to create one" >&2
-    fi
-    mkdir -p "$ws/.claude"
-    touch "$MARKER"
-fi
 exec "$@"
 SCRIPT
 
