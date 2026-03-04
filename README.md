@@ -6,14 +6,6 @@ The goal: let Claude run long-running processes -- building, testing, debugging,
 
 Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but inside a Docker container that isolates it from your host system. The container can only access the project directory you mount -- so Claude can go wild without nuking your machine.
 
-> **DO NOT DEPLOY THIS TO PRODUCTION. DO NOT RUN THIS IN THE CLOUD.**
->
-> This tool is designed for **local development machines only**. It runs an AI agent with full autonomous permissions inside a container. The isolation is "good enough" for a dev laptop where the blast radius is limited to one project. It is absolutely not hardened for any environment where security matters.
->
-> Seriously: local dev only. Your laptop. Not a server. Not AWS. Not your company's Kubernetes cluster.
-
-> **Warning**: Your global `~/.claude` directory is mounted read-write into the container. This includes your authentication credentials, settings, and global CLAUDE.md. Claude can modify these files. Be careful, and consider adding protections to your `~/.claude/CLAUDE.md` (see below).
-
 > **Platform**: Only tested on macOS. Should work on Linux but is untested. Windows/WSL is not supported.
 
 ## Why Use This?
@@ -147,20 +139,10 @@ export PATH="$HOME/.claude/bin:$PATH"
 - **`--dangerously-skip-permissions`**: Safe here because the container provides the isolation boundary
 - **UID matching**: Container runs as your host UID, so file permissions work correctly
 
-### Protecting Your Global ~/.claude Directory
+## Sandbox System Prompt
 
-Since `~/.claude` is mounted read-write, Claude can modify your global settings and CLAUDE.md. To add a safeguard, add this to your `~/.claude/CLAUDE.md`:
+Every session automatically injects environment-specific instructions into Claude's system prompt via `--append-system-prompt`. This tells Claude about available tools, git auth, package management, filesystem constraints, and safety rules (e.g., don't modify `~/.claude`, don't deploy to production).
 
-```markdown
-# Global Claude Configuration
-
-**IMPORTANT**: This is my global ~/.claude directory. Always ask before modifying any files here, including this file, settings.json, or any other configuration.
-```
-
-This won't prevent changes when Claude is unhinged, but it helps when running Claude normally outside the container.
-
-## Project-Level Instructions
-
-The sandbox automatically injects environment-specific instructions (available tools, git auth, package management) into every session via `--append-system-prompt`. This means Claude always knows it's in a container and how to use the tools — no project file modification needed.
+To customize what Claude knows about the sandbox, edit the `sandbox_prompt` heredoc in `bin/claude-sandbox` (around line 362) and run `make install` to apply.
 
 You can also create a `CLAUDE.md` in your project root (or `.claude/CLAUDE.md`) for project-specific instructions. Run `/init` inside Claude to generate one interactively.
