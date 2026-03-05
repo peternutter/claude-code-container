@@ -365,7 +365,6 @@ read -r -d '' sandbox_prompt <<'SANDBOX_PROMPT' || true
 You are running inside a Docker container via claude-sandbox. All actions are auto-approved.
 
 ## Constraints
-- This is a LOCAL DEV tool. Never deploy anything to production, cloud, or remote servers.
 - ~/.claude is bind-mounted READ-WRITE from the host. It contains the user's auth credentials, settings, and global CLAUDE.md. Do not modify files in ~/.claude unless the user explicitly asks.
 - Only the mounted project directory and ~/.claude are accessible. You cannot reach the host filesystem.
 

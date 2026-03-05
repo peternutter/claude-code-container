@@ -6,6 +6,12 @@ The goal: let Claude run long-running processes -- building, testing, debugging,
 
 Claude runs with `--dangerously-skip-permissions` (no confirmation prompts), but inside a Docker container that isolates it from your host system. The container can only access the project directory you mount -- so Claude can go wild without nuking your machine.
 
+> **DO NOT DEPLOY THIS TO PRODUCTION. DO NOT RUN THIS IN THE CLOUD.**
+>
+> This tool is designed for **local development machines only**. It runs an AI agent with full autonomous permissions inside a container. The isolation is "good enough" for a dev laptop where the blast radius is limited to one project. It is absolutely not hardened for any environment where security matters.
+>
+> Seriously: local dev only. Your laptop. Not a server. Not AWS. Not your company's Kubernetes cluster.
+
 > **Platform**: Only tested on macOS. Should work on Linux but is untested. Windows/WSL is not supported.
 
 ## Why Use This?
