@@ -89,7 +89,7 @@ Git authentication uses **HTTPS with a GitHub token** (SSH is not supported insi
 GH_TOKEN=ghp_your_token_here
 ```
 
-Place the `.env` in your project root (takes priority) or in `~/.claude/.env` (global fallback). The token is automatically configured for both `gh` and `git push/pull` via HTTPS.
+Place the `.env` in your project root or in `~/.claude/.env` (global). Both files are loaded if present — global first, then project-specific. Project values override global ones for the same key, while global-only keys (like `GH_TOKEN`) are always available. The token is automatically configured for both `gh` and `git push/pull` via HTTPS.
 
 Add `.env` to your `.gitignore` to avoid committing secrets.
 
@@ -99,6 +99,21 @@ AWS credentials can be provided in two ways:
 
 1. **Config files**: If `~/.aws` exists on the host, it's mounted read-only into the container
 2. **Environment variables**: Add `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, etc. to your `.env` file
+
+## Skills & Commands
+
+Claude Code custom [skills](https://code.claude.com/docs/en/skills) and [slash commands](https://code.claude.com/docs/en/slash-commands) in `~/.claude/skills/` and `~/.claude/commands/` are available inside the sandbox via the `~/.claude` bind mount.
+
+**Important:** These directories must contain real files, not symlinks pointing outside `~/.claude`. Symlinks to host paths (e.g., `~/Developer/dotfiles/...`) break inside the container because those paths don't exist there.
+
+If you manage skills in a dotfiles repo, use the included `sync-skills` script to hard-link files between your dotfiles and `~/.claude/skills/`:
+
+```bash
+# Initial setup (and after git pull, or creating new skills)
+sync-skills ~/path/to/dotfiles/claude/skills
+```
+
+Hard links keep both locations in sync — edits in either place are reflected instantly. Run `sync-skills` again after `git pull` (which may break links) or after creating new skills inside the sandbox.
 
 ## Updating
 

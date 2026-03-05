@@ -1,0 +1,73 @@
+#!/bin/bash
+# sync-skills - Hard-link skill files between dotfiles and ~/.claude/skills
+#
+# Creates hard links so edits in either location are reflected in both.
+# Run after: git pull in dotfiles, creating new skills, or if links break.
+#
+# Usage: sync-skills [dotfiles-skills-dir]
+#   Default: ~/Developer/dotfiles/claude/skills
+
+set -e
+
+DOTFILES_SKILLS="${1:-$HOME/Developer/dotfiles/claude/skills}"
+CLAUDE_SKILLS="$HOME/.claude/skills"
+
+if [[ ! -d "$DOTFILES_SKILLS" ]]; then
+    echo "Error: dotfiles skills dir not found: $DOTFILES_SKILLS"
+    echo "Usage: sync-skills [/path/to/dotfiles/claude/skills]"
+    exit 1
+fi
+
+mkdir -p "$CLAUDE_SKILLS"
+
+linked=0
+skipped=0
+new_in_claude=0
+
+# Link dotfiles -> ~/.claude (dotfiles is source of truth)
+for skill_dir in "$DOTFILES_SKILLS"/*/; do
+    [[ ! -d "$skill_dir" ]] && continue
+    skill_name="$(basename "$skill_dir")"
+    mkdir -p "$CLAUDE_SKILLS/$skill_name"
+
+    for f in "$skill_dir"*; do
+        [[ ! -f "$f" ]] && continue
+        fname="$(basename "$f")"
+        target="$CLAUDE_SKILLS/$skill_name/$fname"
+
+        # Check if already hard-linked (same inode)
+        if [[ -f "$target" ]] && [[ "$(stat -f%i "$f" 2>/dev/null || stat -c%i "$f" 2>/dev/null)" == "$(stat -f%i "$target" 2>/dev/null || stat -c%i "$target" 2>/dev/null)" ]]; then
+            ((skipped++))
+            continue
+        fi
+
+        # Remove old copy and hard-link
+        rm -f "$target"
+        ln "$f" "$target"
+        echo "  linked: $skill_name/$fname"
+        ((linked++))
+    done
+done
+
+# Detect skills in ~/.claude that aren't in dotfiles (created in sandbox)
+for skill_dir in "$CLAUDE_SKILLS"/*/; do
+    [[ ! -d "$skill_dir" ]] && continue
+    skill_name="$(basename "$skill_dir")"
+    if [[ ! -d "$DOTFILES_SKILLS/$skill_name" ]]; then
+        echo "  new (not in dotfiles): $skill_name"
+        # Copy to dotfiles and hard-link back
+        mkdir -p "$DOTFILES_SKILLS/$skill_name"
+        for f in "$skill_dir"*; do
+            [[ ! -f "$f" ]] && continue
+            fname="$(basename "$f")"
+            cp "$f" "$DOTFILES_SKILLS/$skill_name/$fname"
+            rm "$f"
+            ln "$DOTFILES_SKILLS/$skill_name/$fname" "$f"
+            echo "    adopted: $skill_name/$fname"
+        done
+        ((new_in_claude++))
+    fi
+done
+
+echo ""
+echo "Done: $linked linked, $skipped already linked, $new_in_claude new skills adopted"

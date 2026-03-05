@@ -105,11 +105,16 @@ fi
 # Create bin directory
 mkdir -p "$INSTALL_DIR"
 
-# Copy script
+# Copy scripts
 cp "$SCRIPT_DIR/bin/claude-sandbox" "$INSTALL_DIR/$SCRIPT_NAME"
 chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
-
 echo "Created: $INSTALL_DIR/$SCRIPT_NAME"
+
+if [[ -f "$SCRIPT_DIR/bin/sync-skills" ]]; then
+    cp "$SCRIPT_DIR/bin/sync-skills" "$INSTALL_DIR/sync-skills"
+    chmod +x "$INSTALL_DIR/sync-skills"
+    echo "Created: $INSTALL_DIR/sync-skills"
+fi
 
 # Save Dockerfile for auto-rebuild (image can disappear after Docker prune)
 SANDBOX_DIR="$HOME/.claude/sandbox"

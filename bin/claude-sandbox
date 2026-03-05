@@ -305,33 +305,20 @@ if [[ -d "$HOME/.aws" ]]; then
     docker_args+=(-v "$HOME/.aws":/home/claude/.aws:ro)
 fi
 
-# Pass .env file: project root first, then global fallback
-if [[ -f "$project_path/.env" ]]; then
-    docker_args+=(--env-file "$project_path/.env")
-    echo "Environment: loaded $project_path/.env"
-elif [[ -f "$HOME/.claude/.env" ]]; then
+# Pass .env files: global first, then project-specific (project values override global)
+if [[ -f "$HOME/.claude/.env" ]]; then
     docker_args+=(--env-file "$HOME/.claude/.env")
     echo "Environment: loaded ~/.claude/.env (global)"
 fi
+if [[ -f "$project_path/.env" ]]; then
+    docker_args+=(--env-file "$project_path/.env")
+    echo "Environment: loaded $project_path/.env (project)"
+fi
 
-# Resolve symlinked skills/commands dirs so they mount correctly in the container.
-# On macOS, ~/.claude/skills may symlink to ~/Developer/dotfiles/claude/skills which
-# doesn't exist inside the container. We resolve to the real host path and bind-mount it.
-# IMPORTANT: These mounts must come AFTER the ~/.claude bind mount in docker run,
-# otherwise the parent mount covers the child. Collected separately for ordering.
+# Skills/commands: store real files in ~/.claude/skills/ and ~/.claude/commands/.
+# If using dotfiles, symlink FROM dotfiles TO ~/.claude (not the other way around),
+# so the bind mount of ~/.claude brings the real files into the container.
 skills_overlay=()
-for subdir in skills commands; do
-    link_path="$HOME/.claude/$subdir"
-    if [[ -L "$link_path" ]]; then
-        real_path="$(readlink -f "$link_path")"
-        if [[ -d "$real_path" ]]; then
-            skills_overlay+=(-v "$real_path:/home/claude/.claude/$subdir:ro")
-            echo "Resolved $subdir symlink: $real_path"
-        else
-            echo "⚠ ~/.claude/$subdir symlink target not found: $real_path"
-        fi
-    fi
-done
 
 # Fix settings.json macOS paths for the container.
 # settings.json is a real file (not a symlink) so this overlay mount works reliably.
@@ -353,20 +340,15 @@ if [[ -f "$HOME/.claude/settings.json" ]]; then
     sed "s|/Users/[^/]*/\.claude/|/home/claude/.claude/|g" \
         "$HOME/.claude/settings.json" > "$resolved_dir/settings.json"
     if ! diff -q "$HOME/.claude/settings.json" "$resolved_dir/settings.json" &>/dev/null; then
-        settings_overlay=(-v "$resolved_dir/settings.json:/home/claude/.claude/settings.json:ro")
+        settings_overlay=(-v "$resolved_dir/settings.json:/home/claude/.claude/settings.json")
         echo "Fixed settings.json paths for container"
     fi
 fi
 
 # Sandbox environment instructions injected via --append-system-prompt
-# Edit this heredoc to customize what Claude knows about the sandbox environment.
 read -r -d '' sandbox_prompt <<'SANDBOX_PROMPT' || true
 # Sandbox Environment
 You are running inside a Docker container via claude-sandbox. All actions are auto-approved.
-
-## Constraints
-- ~/.claude is bind-mounted READ-WRITE from the host. It contains the user's auth credentials, settings, and global CLAUDE.md. Do not modify files in ~/.claude unless the user explicitly asks.
-- Only the mounted project directory and ~/.claude are accessible. You cannot reach the host filesystem.
 
 ## Available tools
 - Python 3.12, uv, ruff, mypy, pytest, ipython
@@ -394,7 +376,7 @@ SANDBOX_PROMPT
 # 1. claude-home volume provides persistent home directory (for .claude.json, etc.)
 # 2. ~/.claude bind mount overlays credentials/settings from host
 # 3. settings.json overlay fixes macOS paths for the container
-# 4. skills/commands overlays resolve symlinked dirs from host
+# 4. (skills/commands: real files live in ~/.claude, no overlay needed)
 # 5. workspace bind mount overlays the project directory
 
 docker run -it --rm \
