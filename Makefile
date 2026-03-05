@@ -23,5 +23,5 @@ update:
 uninstall:
 	docker rmi $(IMAGE) 2>/dev/null || true
 	docker volume rm claude-home claude-uv-cache claude-python-bin 2>/dev/null || true
-	rm -f $(HOME)/.claude/bin/claude-sandbox
-	@echo "Removed: Docker image, volumes, and ~/.claude/bin/claude-sandbox"
+	rm -f $(HOME)/.claude/bin/claude-sandbox $(HOME)/.claude/bin/sync-skills
+	@echo "Removed: Docker image, volumes, and ~/.claude/bin scripts"

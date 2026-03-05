@@ -60,9 +60,9 @@ MOUNTS
     <project_path>         -> <container_workspace>
 
 ENVIRONMENT
-    Environment variables are loaded from a .env file. Checked in order:
-      1. <project_root>/.env  (project-specific, takes priority)
-      2. ~/.claude/.env        (global fallback for all projects)
+    Both .env files are loaded if present (global first, project overrides):
+      1. ~/.claude/.env        (global, always loaded)
+      2. <project_root>/.env   (project-specific, overrides global)
     Use this for GH_TOKEN, API keys, etc.
 
     CLAUDE_SANDBOX_SKIP_NETWORK    Skip the Docker network selection prompt
@@ -205,19 +205,9 @@ echo "  ~/Screenshots → /home/claude/Screenshots (ro)"
 [[ -d "$HOME/.aws" ]] && echo "  ~/.aws → /home/claude/.aws (ro)"
 echo "  $project_path → $container_workspace"
 echo ""
-echo "Copied into volume (not bind-mounted):"
-[[ -f "$HOME/.claude.json" ]] && echo "  ✓ ~/.claude.json"
+echo "Synced into volume:"
+[[ -f "$HOME/.claude.json" ]] && echo "  ✓ ~/.claude.json (MCP servers)"
 [[ -d "$HOME/.google_workspace_mcp" ]] && echo "  ✓ ~/.google_workspace_mcp/"
-
-# Check CLAUDE.md files
-[[ -f "$HOME/.claude/CLAUDE.md" ]] && echo "  ✓ Global CLAUDE.md" || echo "  ○ No global CLAUDE.md"
-if [[ -f "$project_path/CLAUDE.md" ]]; then
-    echo "  ✓ Project CLAUDE.md (root)"
-elif [[ -f "$project_path/.claude/CLAUDE.md" ]]; then
-    echo "  ✓ Project CLAUDE.md (.claude/)"
-else
-    echo "  ○ No project CLAUDE.md"
-fi
 echo ""
 
 # ============================================================
@@ -315,25 +305,17 @@ if [[ -f "$project_path/.env" ]]; then
     echo "Environment: loaded $project_path/.env (project)"
 fi
 
-# Skills/commands: store real files in ~/.claude/skills/ and ~/.claude/commands/.
-# If using dotfiles, symlink FROM dotfiles TO ~/.claude (not the other way around),
-# so the bind mount of ~/.claude brings the real files into the container.
-skills_overlay=()
-
 # Fix settings.json macOS paths for the container.
-# settings.json is a real file (not a symlink) so this overlay mount works reliably.
 resolved_dir="$(mktemp -d)"
-
-# Cleanup temp dir and cross-link new sandbox sessions back to host on exit
-cleanup_and_crosslink() {
+cleanup() {
     rm -rf "$resolved_dir"
-    # Post-exit: container -> host (so host sees new sandbox conversations)
+    # Post-exit: cross-link new sandbox sessions back to host
     if [[ "$host_project_key" != "$container_project_key" ]]; then
         crosslink_sessions "$container_project_dir" "$host_project_dir" "$container_project_key"
         crosslink_sessions "$host_project_dir" "$container_project_dir" "$host_project_key"
     fi
 }
-trap cleanup_and_crosslink EXIT
+trap cleanup EXIT
 settings_overlay=()
 
 if [[ -f "$HOME/.claude/settings.json" ]]; then
@@ -376,8 +358,7 @@ SANDBOX_PROMPT
 # 1. claude-home volume provides persistent home directory (for .claude.json, etc.)
 # 2. ~/.claude bind mount overlays credentials/settings from host
 # 3. settings.json overlay fixes macOS paths for the container
-# 4. (skills/commands: real files live in ~/.claude, no overlay needed)
-# 5. workspace bind mount overlays the project directory
+# 4. workspace bind mount overlays the project directory
 
 docker run -it --rm \
     --user "$(id -u):$(id -g)" \
@@ -388,7 +369,6 @@ docker run -it --rm \
     -v claude-home:/home/claude \
     -v "$HOME/.claude":/home/claude/.claude \
     "${settings_overlay[@]}" \
-    "${skills_overlay[@]}" \
     -v "$HOME/Screenshots":/home/claude/Screenshots:ro \
     -v "$project_path":"$container_workspace" \
     -w "$container_workspace" \
