@@ -244,15 +244,28 @@ fi
 # Uses `claude mcp add-json` so Claude Code manages its own config file.
 echo "Syncing configs into container volume..."
 
-# Extract mcpServers from host config
+# Extract mcpServers from host config, resolving ${VAR} placeholders from .env files
 if [[ -f "$HOME/.claude.json" ]]; then
-    mcp_servers=$(python3 -c "
-import json, sys
+    mcp_servers=$(
+        # Source .env files so env vars are available for placeholder resolution
+        [[ -f "$HOME/.claude/.env" ]] && set -a && source "$HOME/.claude/.env" && set +a
+        [[ -f "$project_path/.env" ]] && set -a && source "$project_path/.env" && set +a
+        [[ -f "$HOME/.env" ]] && set -a && source "$HOME/.env" && set +a
+        python3 -c "
+import json, os, re, sys
 with open('$HOME/.claude.json') as f:
     data = json.load(f)
+def resolve(obj):
+    if isinstance(obj, str):
+        return re.sub(r'\\\$\{(\w+)\}', lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+    if isinstance(obj, dict):
+        return {k: resolve(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [resolve(v) for v in obj]
+    return obj
 for name, config in data.get('mcpServers', {}).items():
     print(name)
-    print(json.dumps(config))
+    print(json.dumps(resolve(config)))
 " 2>/dev/null)
 fi
 
@@ -270,6 +283,33 @@ claude mcp remove '$name' --scope user 2>/dev/null
 claude mcp add-json '$name' '$escaped_config' --scope user || echo \"  ⚠ Failed to sync MCP server: $name\" >&2
 "
     done <<< "$mcp_servers"
+fi
+
+# Sync global settings from host ~/.claude.json (remoteControlAtStartup, etc.)
+if [[ -f "$HOME/.claude.json" ]]; then
+    host_settings=$(python3 -c "
+import json
+with open('$HOME/.claude.json') as f:
+    data = json.load(f)
+# Keys to sync from host to container
+for key in ['remoteControlAtStartup']:
+    if key in data:
+        print(f'{key}={json.dumps(data[key])}')
+" 2>/dev/null)
+    while IFS='=' read -r key value; do
+        [[ -z "$key" ]] && continue
+        sync_script+="
+# Sync $key from host
+if [ -f /home/claude/.claude.json ]; then
+    python3 -c \"
+import json
+with open('/home/claude/.claude.json') as f: data = json.load(f)
+data['$key'] = $value
+with open('/home/claude/.claude.json', 'w') as f: json.dump(data, f, indent=2)
+\" 2>/dev/null
+fi
+"
+    done <<< "$host_settings"
 fi
 
 # Copy Google Workspace OAuth credentials
