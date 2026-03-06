@@ -56,6 +56,7 @@ MOUNTS
     claude-home volume     -> /home/claude            (persistent home)
     ~/.claude              -> /home/claude/.claude    (auth, settings from host)
     ~/Screenshots          -> /home/claude/Screenshots (read-only)
+    ~/.ssh                 -> /home/claude/.ssh       (read-only, if exists)
     ~/.aws                 -> /home/claude/.aws       (read-only, if exists)
     <project_path>         -> <container_workspace>
 
@@ -202,6 +203,7 @@ echo ""
 echo "Mounts:"
 echo "  ~/.claude → /home/claude/.claude"
 echo "  ~/Screenshots → /home/claude/Screenshots (ro)"
+[[ -d "$HOME/.ssh" ]] && echo "  ~/.ssh → /home/claude/.ssh (ro)"
 [[ -d "$HOME/.aws" ]] && echo "  ~/.aws → /home/claude/.aws (ro)"
 echo "  $project_path → $container_workspace"
 echo ""
@@ -290,6 +292,19 @@ docker run --rm \
     "${sync_args[@]}" \
     "$image" -c "$sync_script"
 
+# Copy SSH keys/config into the container with correct ownership.
+# Direct bind-mount fails because SSH demands strict permissions (600 for keys, 700 for dir)
+# and the host UID may not match the container runtime UID. Copying into a temp dir with
+# correct ownership solves both the permission and writable known_hosts problems.
+ssh_staging=""
+if [[ -d "$HOME/.ssh" ]]; then
+    ssh_staging="$(mktemp -d)"
+    cp -a "$HOME/.ssh/." "$ssh_staging/"
+    chmod 700 "$ssh_staging"
+    chmod 600 "$ssh_staging"/* 2>/dev/null || true
+    docker_args+=(-v "$ssh_staging":/home/claude/.ssh)
+fi
+
 # Mount AWS config for profile/SSO-based auth (key-based auth works via .env)
 if [[ -d "$HOME/.aws" ]]; then
     docker_args+=(-v "$HOME/.aws":/home/claude/.aws:ro)
@@ -309,6 +324,7 @@ fi
 resolved_dir="$(mktemp -d)"
 cleanup() {
     rm -rf "$resolved_dir"
+    [[ -n "$ssh_staging" ]] && rm -rf "$ssh_staging"
     # Post-exit: cross-link new sandbox sessions back to host
     if [[ "$host_project_key" != "$container_project_key" ]]; then
         crosslink_sessions "$container_project_dir" "$host_project_dir" "$container_project_key"
@@ -347,6 +363,11 @@ You are running inside a Docker container via claude-sandbox. All actions are au
 - Git uses HTTPS, not SSH. Auth is handled via GH_TOKEN.
 - git push, git pull, and gh commands work out of the box.
 - If git auth fails, check that GH_TOKEN is set in .env or ~/.claude/.env.
+
+## SSH
+- ~/.ssh is mounted read-only from the host (keys, config, known_hosts).
+- SSH host aliases from ~/.ssh/config work directly (e.g. `ssh runpod`).
+- Use ssh and scp for remote operations. See the runpod-fetch skill for guidelines.
 
 ## Filesystem
 - Only the mounted project directory is writable.

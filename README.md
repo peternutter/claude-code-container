@@ -80,7 +80,7 @@ The `--as <path>` flag overrides the container workspace path. This is useful wh
 
 ## Git & GitHub Authentication
 
-Git authentication uses **HTTPS with a GitHub token** (SSH is not supported inside the container due to UID mapping constraints).
+Git authentication uses **HTTPS with a GitHub token** (SSH keys are available but HTTPS is preferred for GitHub).
 
 1. Create a [personal access token](https://github.com/settings/tokens) with `repo` scope
 2. Add it to a `.env` file:
@@ -92,6 +92,24 @@ GH_TOKEN=ghp_your_token_here
 Place the `.env` in your project root or in `~/.claude/.env` (global). Both files are loaded if present — global first, then project-specific. Project values override global ones for the same key, while global-only keys (like `GH_TOKEN`) are always available. The token is automatically configured for both `gh` and `git push/pull` via HTTPS.
 
 Add `.env` to your `.gitignore` to avoid committing secrets.
+
+## SSH Access
+
+If `~/.ssh` exists on the host, it's mounted read-only into the container. SSH host aliases, keys, and `known_hosts` all work.
+
+Set up host aliases in your **host's** `~/.ssh/config` (not inside the container):
+```
+Host myserver
+    HostName 1.2.3.4
+    Port 22
+    User root
+    IdentityFile ~/.ssh/id_ed25519
+    StrictHostKeyChecking accept-new
+```
+
+Then inside the sandbox: `ssh myserver`, `scp myserver:/path/file ./`.
+
+**Note:** SSH keys must not be passphrase-protected (no terminal to enter passphrases inside the container). Use `ssh-agent` on the host and add keys with `ssh-add` before launching the sandbox if your keys have passphrases.
 
 ## AWS Authentication
 
